@@ -25,6 +25,7 @@ function App() {
     deleteTable,
     assignTokenToTable,
     releaseTokenFromTable,
+    releaseTable,
     getTokenAssignment,
   } = useTables(orgId);
 
@@ -106,6 +107,7 @@ function App() {
             onAdd={addTable}
             onUpdate={updateTable}
             onDelete={deleteTable}
+            onRelease={releaseTable}
           />
         )}
       </div>

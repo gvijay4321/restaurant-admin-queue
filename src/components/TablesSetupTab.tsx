@@ -18,6 +18,7 @@ interface Props {
     }>
   ) => Promise<{ error: string | null } | void>;
   onDelete: (id: string) => Promise<{ error: string | null } | void>;
+  onRelease: (id: string) => Promise<{ error: string | null } | void>;
 }
 
 function AddTableModal({
@@ -114,15 +115,19 @@ function EditTableModal({
   onClose,
   onUpdate,
   onDelete,
+  onRelease,
 }: Readonly<{
   table: RestaurantTable;
   onClose: () => void;
   onUpdate: Props["onUpdate"];
   onDelete: Props["onDelete"];
+  onRelease: Props["onRelease"];
 }>) {
   const [tableNumber, setTableNumber] = useState(table.table_number);
   const [capacity, setCapacity] = useState(table.capacity.toString());
   const [submitting, setSubmitting] = useState(false);
+
+  const hasOccupancy = (table.current_occupancy || 0) > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,6 +151,22 @@ function EditTableModal({
     if (!confirm(`Delete Table ${table.table_number}?`)) return;
 
     const res = await onDelete(table.id);
+    if (res?.error) {
+      alert("Error: " + res.error);
+    } else {
+      onClose();
+    }
+  };
+
+  const handleRelease = async () => {
+    if (
+      !confirm(
+        `Release Table ${table.table_number}? This will remove all customers assigned to this table.`
+      )
+    )
+      return;
+
+    const res = await onRelease(table.id);
     if (res?.error) {
       alert("Error: " + res.error);
     } else {
@@ -206,6 +227,17 @@ function EditTableModal({
             </button>
           </div>
 
+          {/* Release Table Button - only show when table has occupancy */}
+          {hasOccupancy && (
+            <button
+              type="button"
+              onClick={handleRelease}
+              className="w-full px-4 py-3 bg-orange-50 text-orange-700 rounded-xl hover:bg-orange-100 font-semibold transition-all border-2 border-orange-200"
+            >
+              🔓 Release Table ({table.current_occupancy} seats occupied)
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleDelete}
@@ -225,34 +257,12 @@ export function TablesSetupTab({
   onAdd,
   onUpdate,
   onDelete,
+  onRelease,
 }: Readonly<Props>) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTable, setEditingTable] = useState<RestaurantTable | null>(
     null
   );
-
-  const getStatusBadge = (status: RestaurantTable["status"]) => {
-    switch (status) {
-      case "available":
-        return (
-          <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-            ✓ Available
-          </span>
-        );
-      case "occupied":
-        return (
-          <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
-            ● Occupied
-          </span>
-        );
-      case "reserved":
-        return (
-          <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
-            ⊙ Reserved
-          </span>
-        );
-    }
-  };
 
   return (
     <>
@@ -394,6 +404,7 @@ export function TablesSetupTab({
           onClose={() => setEditingTable(null)}
           onUpdate={onUpdate}
           onDelete={onDelete}
+          onRelease={onRelease}
         />
       )}
     </>
