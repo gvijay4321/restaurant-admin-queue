@@ -14,7 +14,16 @@ function App() {
   const [orgId, setOrgId] = useState("default");
   const [activeTab, setActiveTab] = useState<TabType>("customers");
 
-  const { queue, loading, error, handleAction, resetQueue } = useQueue(orgId);
+  const {
+    queue,
+    loading,
+    error,
+    lastAction,
+    handleAction,
+    undoLastAction,
+    updateCustomer,
+    resetQueue,
+  } = useQueue(orgId);
 
   const {
     tables,
@@ -95,9 +104,12 @@ function App() {
             tables={tables}
             loading={loading}
             service={service}
+            lastAction={lastAction}
             onAction={handleAction}
             onAssignTable={assignTokenToTable}
             onReleaseTable={releaseTokenFromTable}
+            onUpdateCustomer={updateCustomer}
+            onUndo={undoLastAction}
             getTokenAssignment={getTokenAssignment}
           />
         ) : (
