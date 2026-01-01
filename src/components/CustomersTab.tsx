@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { QueueToken, QueueAction } from "../types/queue";
-import { RestaurantTable } from "../types/table";
+import { RestaurantTable, TableAssignment } from "../types/table";
 import { LoadingState } from "./LoadingState";
 import { EmptyState } from "./EmptyState";
 
@@ -25,9 +25,8 @@ interface Props {
     updates: { people_count?: number; notes?: string; name?: string }
   ) => Promise<{ error: string | null } | void>;
   onUndo: () => Promise<{ error: string | null } | void>;
-  getTokenAssignment?: (
-    tokenId: string
-  ) => { table_id: string; party_size: number } | undefined;
+  getTokenAssignments?: (tokenId: string) => TableAssignment[];
+  getTotalAssignedSeats?: (tokenId: string) => number;
 }
 
 // Edit Customer Modal
@@ -141,6 +140,236 @@ function EditCustomerModal({
   );
 }
 
+// Multi-Table Assignment Modal
+function AssignTableModal({
+  token,
+  tables,
+  currentAssignments,
+  totalAssigned,
+  onAssign,
+  onClose,
+}: Readonly<{
+  token: QueueToken;
+  tables: RestaurantTable[];
+  currentAssignments: { tableNumber: string; count: number }[];
+  totalAssigned: number;
+  onAssign: (
+    tableId: string,
+    count: number
+  ) => Promise<{ error: string | null } | void>;
+  onClose: () => void;
+}>) {
+  const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [assignCount, setAssignCount] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const partySize = token.people_count || 2;
+  const remaining = partySize - totalAssigned;
+
+  // Get available tables (those with free seats)
+  const availableTables = tables
+    .map((t) => ({
+      ...t,
+      availableSeats: t.capacity - (t.current_occupancy || 0),
+    }))
+    .filter((t) => t.availableSeats > 0);
+
+  const selectedTableData = selectedTable
+    ? availableTables.find((t) => t.id === selectedTable)
+    : null;
+
+  const handleSelectTable = (tableId: string) => {
+    setSelectedTable(tableId);
+    const table = availableTables.find((t) => t.id === tableId);
+    if (table) {
+      // Default to min of remaining people or available seats
+      const defaultCount = Math.min(remaining, table.availableSeats);
+      setAssignCount(defaultCount.toString());
+    }
+  };
+
+  const handleAssign = async () => {
+    if (!selectedTable || !assignCount) return;
+
+    const count = parseInt(assignCount);
+    if (count <= 0) {
+      alert("Please enter a valid number of people");
+      return;
+    }
+    if (count > remaining) {
+      alert(`Cannot assign more than ${remaining} remaining people`);
+      return;
+    }
+
+    setSubmitting(true);
+    const res = await onAssign(selectedTable, count);
+    setSubmitting(false);
+
+    if (res?.error) {
+      alert("Error: " + res.error);
+    } else {
+      // Reset selection for next assignment
+      setSelectedTable(null);
+      setAssignCount("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <h2 className="text-xl font-bold text-gray-900 mb-2 text-center">
+          🪑 Assign Tables for #{token.token_number}
+        </h2>
+        <p className="text-center text-gray-600 mb-4">
+          {token.name} — Party of <strong>{partySize}</strong>
+        </p>
+
+        {/* Progress indicator */}
+        <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4 mb-4">
+          <div className="flex justify-between items-center mb-2">
+            <span className="font-semibold text-blue-900">
+              Seating Progress
+            </span>
+            <span className="text-blue-700 font-bold">
+              {totalAssigned} / {partySize}
+            </span>
+          </div>
+          <div className="w-full bg-blue-200 rounded-full h-3">
+            <div
+              className="bg-blue-600 h-3 rounded-full transition-all"
+              style={{ width: `${(totalAssigned / partySize) * 100}%` }}
+            />
+          </div>
+          {remaining > 0 ? (
+            <p className="text-sm text-blue-800 mt-2 font-medium">
+              👥 {remaining} {remaining === 1 ? "person" : "people"} still need
+              seats
+            </p>
+          ) : (
+            <p className="text-sm text-green-700 mt-2 font-medium">
+              ✅ All {partySize} people have been assigned!
+            </p>
+          )}
+        </div>
+
+        {/* Current assignments */}
+        {currentAssignments.length > 0 && (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-3 mb-4">
+            <p className="text-sm font-semibold text-green-800 mb-1">
+              ✓ Assigned to:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {currentAssignments.map((a, idx) => (
+                <span
+                  key={idx}
+                  className="inline-block px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium"
+                >
+                  Table {a.tableNumber} ({a.count})
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Table selection - only show if remaining > 0 */}
+        {remaining > 0 && (
+          <>
+            <p className="text-sm font-semibold text-gray-700 mb-2">
+              Select a table:
+            </p>
+            <div className="space-y-2 mb-4 max-h-48 overflow-y-auto">
+              {availableTables.length === 0 ? (
+                <p className="text-gray-600 text-center py-4">
+                  No tables with free seats available.
+                </p>
+              ) : (
+                availableTables.map((table) => (
+                  <button
+                    key={table.id}
+                    onClick={() => handleSelectTable(table.id)}
+                    className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
+                      selectedTable === table.id
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900">
+                        Table {table.table_number}
+                      </span>
+                      <span className="text-sm text-green-700 font-semibold">
+                        {table.availableSeats} seats free
+                      </span>
+                    </div>
+                    {(table.current_occupancy || 0) > 0 && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        {table.current_occupancy}/{table.capacity} seats used
+                      </p>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+
+            {/* People count input - show when table selected */}
+            {selectedTable && selectedTableData && (
+              <div className="bg-gray-50 rounded-xl p-4 mb-4">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  How many people at Table {selectedTableData.table_number}?
+                </label>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="number"
+                    value={assignCount}
+                    onChange={(e) => setAssignCount(e.target.value)}
+                    min="1"
+                    max={Math.min(remaining, selectedTableData.availableSeats)}
+                    className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-lg font-bold text-center"
+                  />
+                  <span className="text-gray-500 text-sm">
+                    (max {Math.min(remaining, selectedTableData.availableSeats)}
+                    )
+                  </span>
+                </div>
+                <button
+                  onClick={handleAssign}
+                  disabled={
+                    submitting || !assignCount || parseInt(assignCount) <= 0
+                  }
+                  className="w-full mt-3 px-4 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:opacity-50 font-bold transition-all"
+                >
+                  {submitting
+                    ? "Assigning..."
+                    : `Assign ${assignCount || 0} to Table ${
+                        selectedTableData.table_number
+                      }`}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Footer buttons */}
+        <div className="flex gap-3 mt-4">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-semibold transition-all"
+          >
+            {remaining === 0 ? "Done ✓" : "Close"}
+          </button>
+        </div>
+
+        {remaining > 0 && totalAssigned > 0 && (
+          <p className="text-xs text-gray-500 text-center mt-3">
+            You can close and continue seating later
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function CustomersTab({
   queue,
   tables,
@@ -152,7 +381,8 @@ export function CustomersTab({
   onReleaseTable,
   onUpdateCustomer,
   onUndo,
-  getTokenAssignment,
+  getTokenAssignments,
+  getTotalAssignedSeats,
 }: Readonly<Props>) {
   const [assigningToken, setAssigningToken] = useState<QueueToken | null>(null);
   const [editingToken, setEditingToken] = useState<QueueToken | null>(null);
@@ -173,52 +403,30 @@ export function CustomersTab({
     );
   }
 
-  // Filter tables that have enough seats for the current customer
-  const getAvailableTables = () => {
-    return tables
-      .map((t) => ({
-        ...t,
-        availableSeats: t.capacity - (t.current_occupancy || 0),
-      }))
-      .filter((t) => t.availableSeats > 0);
+  // Get all assigned tables for a token with their counts
+  const getAssignedTablesInfo = (tokenId: string) => {
+    if (!getTokenAssignments) return [];
+    const assignments = getTokenAssignments(tokenId);
+    return assignments.map((a) => {
+      const table = tables.find((t) => t.id === a.table_id);
+      return {
+        tableNumber: table?.table_number || "?",
+        count: a.party_size,
+      };
+    });
   };
 
-  const handleAssignTable = async (token: QueueToken) => {
-    setAssigningToken(token);
+  // Get total assigned for a token
+  const getTotalAssigned = (tokenId: string) => {
+    if (getTotalAssignedSeats) {
+      return getTotalAssignedSeats(tokenId);
+    }
+    return 0;
   };
 
-  const handleAssign = async (tableId: string) => {
-    if (!assigningToken) return;
-    const partySize = assigningToken.people_count || 2;
-
-    const table = tables.find((t) => t.id === tableId);
-    const availableSeats = table
-      ? table.capacity - (table.current_occupancy || 0)
-      : 0;
-
-    const seatsToAssign = Math.min(partySize, Math.max(0, availableSeats));
-
-    if (seatsToAssign < partySize) {
-      const ok = confirm(
-        `Table ${
-          table?.table_number ?? tableId
-        } has only ${availableSeats} free seat(s). ` +
-          `We'll assign ${seatsToAssign} seat(s) to this table (party is ${partySize}). Proceed?`
-      );
-      if (!ok) return;
-    }
-
-    const assignRes = await onAssignTable(
-      tableId,
-      assigningToken.id,
-      seatsToAssign
-    );
-
-    if (assignRes?.error) {
-      alert("Error assigning table: " + assignRes.error);
-    } else {
-      setAssigningToken(null);
-    }
+  const handleAssignFromModal = async (tableId: string, count: number) => {
+    if (!assigningToken) return { error: "No token selected" };
+    return await onAssignTable(tableId, assigningToken.id, count);
   };
 
   const handleCall = async (tokenId: string) => {
@@ -271,17 +479,17 @@ export function CustomersTab({
     if (res?.error) alert("Error: " + res.error);
   };
 
-  const getAssignedTable = (tokenId: string) => {
-    if (!getTokenAssignment) return undefined;
-    const assignment = getTokenAssignment(tokenId);
-    if (!assignment) return undefined;
-    return tables.find((t) => t.id === assignment.table_id);
-  };
-
   const getStatusMessage = (
     token: QueueToken,
-    assignedTable?: RestaurantTable
+    assignedTables: { tableNumber: string; count: number }[],
+    totalAssigned: number
   ) => {
+    const partySize = token.people_count || 0;
+    const remaining = partySize - totalAssigned;
+    const tablesText = assignedTables
+      .map((t) => `${t.tableNumber} (${t.count})`)
+      .join(", ");
+
     if (token.status === "on_hold") {
       return {
         emoji: "⏸️",
@@ -289,31 +497,38 @@ export function CustomersTab({
         color: "bg-orange-100 text-orange-800",
       };
     }
-    if (token.status === "waiting" && !assignedTable) {
+    if (token.status === "waiting" && totalAssigned === 0) {
       return {
         emoji: "⏳",
         text: "No table assigned yet",
         color: "bg-gray-100 text-gray-700",
       };
     }
-    if (token.status === "waiting" && assignedTable) {
+    if (token.status === "waiting" && totalAssigned > 0 && remaining > 0) {
       return {
         emoji: "🪑",
-        text: `Table ${assignedTable.table_number} assigned`,
+        text: `Tables ${tablesText} — ${remaining} more need seats`,
+        color: "bg-yellow-100 text-yellow-800",
+      };
+    }
+    if (token.status === "waiting" && remaining === 0) {
+      return {
+        emoji: "🪑",
+        text: `Tables ${tablesText} — Ready to call!`,
         color: "bg-blue-100 text-blue-800",
       };
     }
     if (token.status === "called") {
       return {
         emoji: "📢",
-        text: `Customer called - Table ${assignedTable?.table_number} ready`,
+        text: `Called — Tables ${tablesText}`,
         color: "bg-yellow-100 text-yellow-800",
       };
     }
     if (token.status === "seated") {
       return {
         emoji: "🍽️",
-        text: `Eating at Table ${assignedTable?.table_number}`,
+        text: `Eating at Tables ${tablesText}`,
         color: "bg-green-100 text-green-800",
       };
     }
@@ -373,8 +588,12 @@ export function CustomersTab({
       {/* Active Customer Cards */}
       <div className="space-y-4">
         {activeQueue.map((token) => {
-          const assignedTable = getAssignedTable(token.id);
-          const status = getStatusMessage(token, assignedTable);
+          const assignedTables = getAssignedTablesInfo(token.id);
+          const totalAssigned = getTotalAssigned(token.id);
+          const partySize = token.people_count || 0;
+          const remaining = partySize - totalAssigned;
+          const isFullyAssigned = remaining === 0 && totalAssigned > 0;
+          const status = getStatusMessage(token, assignedTables, totalAssigned);
 
           return (
             <div
@@ -427,14 +646,17 @@ export function CustomersTab({
 
               {/* Actions */}
               <div className="space-y-2">
-                {/* Assign Table - only when waiting and NO table */}
-                {token.status === "waiting" && !assignedTable && (
+                {/* Assign Table - when waiting and NOT fully assigned */}
+                {token.status === "waiting" && !isFullyAssigned && (
                   <>
                     <button
-                      onClick={() => handleAssignTable(token)}
+                      onClick={() => setAssigningToken(token)}
                       className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 px-6 rounded-xl text-base sm:text-lg transition-all active:scale-98 flex items-center justify-center gap-2"
                     >
-                      <span className="text-xl">🪑</span> ASSIGN TABLE
+                      <span className="text-xl">🪑</span>
+                      {totalAssigned > 0
+                        ? `ASSIGN MORE (${remaining} left)`
+                        : "ASSIGN TABLE"}
                     </button>
                     <div className="flex gap-2">
                       <button
@@ -453,8 +675,8 @@ export function CustomersTab({
                   </>
                 )}
 
-                {/* Call - only when waiting WITH table */}
-                {token.status === "waiting" && assignedTable && (
+                {/* Call - when waiting AND fully assigned */}
+                {token.status === "waiting" && isFullyAssigned && (
                   <>
                     <button
                       onClick={() => handleCall(token.id)}
@@ -464,10 +686,10 @@ export function CustomersTab({
                     </button>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleHold(token.id)}
-                        className="flex-1 bg-orange-100 hover:bg-orange-200 text-orange-700 font-semibold py-3 px-4 rounded-xl text-sm transition-all"
+                        onClick={() => setAssigningToken(token)}
+                        className="flex-1 bg-purple-100 hover:bg-purple-200 text-purple-700 font-semibold py-3 px-4 rounded-xl text-sm transition-all"
                       >
-                        ⏸️ Hold
+                        🪑 Change Tables
                       </button>
                       <button
                         onClick={() => handleCancel(token.id)}
@@ -562,87 +784,16 @@ export function CustomersTab({
         </div>
       )}
 
-      {/* Assign Table Modal */}
+      {/* Multi-Table Assignment Modal */}
       {assigningToken && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-2 text-center">
-              Pick a Table for Customer #{assigningToken.token_number}
-            </h2>
-            <p className="text-center text-gray-600 mb-6">
-              Party of <strong>{assigningToken.people_count || 2}</strong>{" "}
-              people
-            </p>
-
-            <div className="space-y-3 mb-6 max-h-96 overflow-y-auto">
-              {(() => {
-                const availableTables = getAvailableTables();
-
-                if (availableTables.length === 0) {
-                  return (
-                    <p className="text-gray-600 text-center py-8">
-                      No tables currently have any free seats.
-                      <br />
-                      Please wait for a table to free up.
-                    </p>
-                  );
-                }
-
-                return availableTables.map((table) => {
-                  const availableSeats = table.availableSeats;
-                  const isTooSmall =
-                    availableSeats < (assigningToken?.people_count || 2);
-                  const isPartiallyOccupied =
-                    (table.current_occupancy || 0) > 0;
-
-                  return (
-                    <button
-                      key={table.id}
-                      onClick={() => handleAssign(table.id)}
-                      className="w-full p-4 bg-white border-2 border-gray-200 rounded-xl hover:bg-blue-50 hover:border-blue-400 transition-all text-left"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-bold text-lg text-gray-900">
-                          🪑 Table {table.table_number}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {isTooSmall && (
-                            <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full font-semibold">
-                              Too small — will squeeze
-                            </span>
-                          )}
-                          {isPartiallyOccupied && (
-                            <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full font-semibold">
-                              Shared
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-gray-600 text-sm">
-                        <strong className="text-green-600">
-                          {availableSeats} seats available
-                        </strong>
-                        {isPartiallyOccupied && (
-                          <span className="text-gray-500">
-                            {" "}
-                            • {table.current_occupancy}/{table.capacity} used
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                });
-              })()}
-            </div>
-
-            <button
-              onClick={() => setAssigningToken(null)}
-              className="w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-semibold transition-all"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+        <AssignTableModal
+          token={assigningToken}
+          tables={tables}
+          currentAssignments={getAssignedTablesInfo(assigningToken.id)}
+          totalAssigned={getTotalAssigned(assigningToken.id)}
+          onAssign={handleAssignFromModal}
+          onClose={() => setAssigningToken(null)}
+        />
       )}
 
       {/* Edit Customer Modal */}

@@ -35,7 +35,8 @@ function App() {
     assignTokenToTable,
     releaseTokenFromTable,
     releaseTable,
-    getTokenAssignment,
+    getTokenAssignments,
+    getTotalAssignedSeats,
   } = useTables(orgId);
 
   // Initial load of URL params (org and svc)
@@ -110,7 +111,8 @@ function App() {
             onReleaseTable={releaseTokenFromTable}
             onUpdateCustomer={updateCustomer}
             onUndo={undoLastAction}
-            getTokenAssignment={getTokenAssignment}
+            getTokenAssignments={getTokenAssignments}
+            getTotalAssignedSeats={getTotalAssignedSeats}
           />
         ) : (
           <TablesSetupTab

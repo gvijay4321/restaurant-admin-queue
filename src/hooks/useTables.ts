@@ -58,7 +58,7 @@ export function useTables(orgId: string) {
       const { error } = await client.from("restaurant_tables").insert({
         org_id: orgId,
         ...tableData,
-        current_occupancy: 0, // New tables start empty
+        current_occupancy: 0,
       });
 
       if (error) {
@@ -113,7 +113,7 @@ export function useTables(orgId: string) {
     [loadTables]
   );
 
-  // NEW: Assign a customer to a table (with partial occupancy support)
+  // Assign a customer to a table (with partial occupancy support)
   const assignTokenToTable = useCallback(
     async (tableId: string, tokenId: string, partySize: number) => {
       try {
@@ -176,37 +176,51 @@ export function useTables(orgId: string) {
     [loadTables, loadAssignments]
   );
 
-  // NEW: Release a specific customer from a table
+  // Release a specific customer from a table (removes ALL their assignments)
   const releaseTokenFromTable = useCallback(
     async (tokenId: string) => {
       try {
-        // Get the assignment
-        const { data: assignment, error: assignError } = await client
-          .from("table_assignments")
-          .select("*")
-          .eq("token_id", tokenId)
-          .single();
+        // Get all assignments for this token
+        const tokenAssignments = assignments.filter(
+          (a) => a.token_id === tokenId
+        );
 
-        if (assignError) {
-          return { error: assignError.message };
+        if (tokenAssignments.length === 0) {
+          return { error: null }; // No assignments to release
         }
 
-        const tableAssignment = assignment as TableAssignment;
+        // For each assignment, update table occupancy and delete assignment
+        for (const assignment of tokenAssignments) {
+          // Get current table info
+          const { data: table, error: tableError } = await client
+            .from("restaurant_tables")
+            .select("*")
+            .eq("id", assignment.table_id)
+            .single();
 
-        // Get current table info
-        const { data: table, error: tableError } = await client
-          .from("restaurant_tables")
-          .select("*")
-          .eq("id", tableAssignment.table_id)
-          .single();
+          if (tableError) {
+            console.error("Error getting table:", tableError.message);
+            continue;
+          }
 
-        if (tableError) {
-          return { error: tableError.message };
+          const currentTable = table as RestaurantTable;
+
+          // Update table occupancy
+          const newOccupancy = Math.max(
+            0,
+            (currentTable.current_occupancy || 0) - assignment.party_size
+          );
+
+          await client
+            .from("restaurant_tables")
+            .update({
+              current_occupancy: newOccupancy,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", assignment.table_id);
         }
 
-        const currentTable = table as RestaurantTable;
-
-        // Delete assignment
+        // Delete all assignments for this token
         const { error: deleteError } = await client
           .from("table_assignments")
           .delete()
@@ -216,23 +230,6 @@ export function useTables(orgId: string) {
           return { error: deleteError.message };
         }
 
-        // Update table occupancy
-        const newOccupancy = Math.max(
-          0,
-          (currentTable.current_occupancy || 0) - tableAssignment.party_size
-        );
-        const { error: updateError } = await client
-          .from("restaurant_tables")
-          .update({
-            current_occupancy: newOccupancy,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", tableAssignment.table_id);
-
-        if (updateError) {
-          return { error: updateError.message };
-        }
-
         await loadTables();
         await loadAssignments();
         return { error: null };
@@ -240,10 +237,10 @@ export function useTables(orgId: string) {
         return { error: "Failed to release table: " + err };
       }
     },
-    [loadTables, loadAssignments]
+    [loadTables, loadAssignments, assignments]
   );
 
-  // OLD: Keep for backwards compatibility (releases entire table)
+  // Release entire table (all customers)
   const releaseTable = useCallback(
     async (tableId: string) => {
       try {
@@ -289,10 +286,20 @@ export function useTables(orgId: string) {
     [assignments]
   );
 
-  // Get assignment for a specific token
-  const getTokenAssignment = useCallback(
+  // Get ALL assignments for a specific token (supports multi-table)
+  const getTokenAssignments = useCallback(
     (tokenId: string) => {
-      return assignments.find((a) => a.token_id === tokenId);
+      return assignments.filter((a) => a.token_id === tokenId);
+    },
+    [assignments]
+  );
+
+  // Get total assigned seats for a token
+  const getTotalAssignedSeats = useCallback(
+    (tokenId: string) => {
+      return assignments
+        .filter((a) => a.token_id === tokenId)
+        .reduce((sum, a) => sum + a.party_size, 0);
     },
     [assignments]
   );
@@ -352,6 +359,7 @@ export function useTables(orgId: string) {
     releaseTokenFromTable,
     releaseTable,
     getTableAssignments,
-    getTokenAssignment,
+    getTokenAssignments,
+    getTotalAssignedSeats,
   } as const;
 }
